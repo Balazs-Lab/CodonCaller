@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="CodonCaller",
-    version="1.0.",
+    version="1.0.0",
     author="Adam Nitido",
     author_email="anitido@gmail.com",
     description="Codon Based Variant Caller for HIV Deep Sequencing Data",

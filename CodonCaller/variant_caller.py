@@ -29,6 +29,8 @@ codon_to_amino_acid = {
 
 class VariantCaller:
     def __init__(self, bed_file, bam_file, reference_fasta, read_quality_threshold=20, base_quality_threshold=35):
+        self.mut_call = None
+        self.codon_frequencies = None
         self.reference_fasta = None
         self.bed_file = bed_file
         self.bam_file = bam_file
@@ -166,18 +168,24 @@ class VariantCaller:
     def process_read(self, cds, read):
 
         read_sequence, read_positions, quality = self.parse_read(read)
-        codon_positions, codons, quality_sum = self.read_to_codon(cds, read_sequence, read_positions, quality)
 
-        # convert codons to amino acids
-        amino_acids = [codon_to_amino_acid.get(codon, 'Unknown') for codon in codons]
+        ## TODO turn this into a proper filter
+        if len(read_positions) > 100:
+            codon_positions, codons, quality_sum = self.read_to_codon(cds, read_sequence, read_positions, quality)
 
-        d = dict(zip(codon_positions, zip(amino_acids, quality_sum)))
+            # convert codons to amino acids
+            amino_acids = [codon_to_amino_acid.get(codon, 'Unknown') for codon in codons]
 
-        ## filter out Ns and low quality mapping codons
-        d_clean = dict(filter(self.filter_amino_acid, d.items()))
+            d = dict(zip(codon_positions, zip(amino_acids, quality_sum)))
 
-        # print(d_clean)
-        return d_clean
+            ## filter out Ns and low quality mapping codons
+            d_clean = dict(filter(self.filter_amino_acid, d.items()))
+
+            # print(d_clean)
+            return d_clean
+        else:
+            pass
+
 
     def process_sample(self, cds):
 
@@ -226,10 +234,11 @@ class VariantCaller:
         cds_start = self.cds_regions[cds][0]
         cds_end = self.cds_regions[cds][1]
         reference_protein = self.cds_aminoacids[cds]
-
         reference_dict = {i + 1: reference_protein[i] for i in range(len(reference_protein))}
         common_positions = set(reference_dict.keys()).intersection(self.aa_counts.keys())
 
+
+        mutant_call_list = []
         positions = []
         mutant_freq = []
 
@@ -240,38 +249,48 @@ class VariantCaller:
             wt = 0
             mut = 0
             tmp_dict = dict()
+            wt_id = None
             for key, value in experimental_aa.items():
                 if key == reference_aa:
                     wt = value
+                    wt_id = key
                 else:
                     mut += value
-            for key, value in experimental_aa.items():
-                if key != reference_aa:
-                    tmp_dict[key] = value / (mut + wt)
-            tmp_dict["WT"] = wt / (wt + mut)
+            if mut > 0:
+                for key, value in experimental_aa.items():
+                    if key != reference_aa:
+                        tmp_dict[key] = value / (mut + wt)
+                        tmp_out = [position, wt_id, key, value / (mut + wt)]
+                        mutant_call_list.append(tmp_out)
+                tmp_dict["WT"] = wt / (wt + mut)
 
             mutant_freq.append(tmp_dict)
             positions.append(position)
-
-        self.aa_freq = dict(zip(positions, mutant_freq))
+        #print(mutant_call_list)
+        mut_call = pd.DataFrame(mutant_call_list, columns=['POS_AA', 'REF_AA', "ALT_AA", "ALT_FREQ"])
+        self.mut_call = mut_call
+        # print(self.mut_call)
+        #self.aa_freq = dict(zip(positions, mutant_freq))
 
 
     def write_to_csv(self, csv_file_path='../test_data/aa_frequencies.csv'):
 
-        # Get a set of all unique codon types
-        all_aminoacids = set(codon_to_amino_acid.values())
+        self.mut_call.to_csv(csv_file_path)
 
-        # Create a CSV file and write headers
-        with open(csv_file_path, 'w', newline='') as csvfile:
-            csv_writer = csv.writer(csvfile)
-
-            # Write headers (position and all codon types)
-            headers = ['Position'] + list(all_aminoacids)
-            csv_writer.writerow(headers)
-
-            # Write frequency data for each position
-            for position, freq_data in self.aa_freq.items():
-                row_data = [position] + [freq_data.get(aminoacid, 0) for aminoacid in all_aminoacids]
-                csv_writer.writerow(row_data)
-
-        print(f'CSV file saved at: {csv_file_path}')
+        # # Get a set of all unique codon types
+        # all_aminoacids = set(codon_to_amino_acid.values())
+        #
+        # # Create a CSV file and write headers
+        # with open(csv_file_path, 'w', newline='') as csvfile:
+        #     csv_writer = csv.writer(csvfile)
+        #
+        #     # Write headers (position and all codon types)
+        #     headers = ['Position'] + list(all_aminoacids)
+        #     csv_writer.writerow(headers)
+        #
+        #     # Write frequency data for each position
+        #     for position, freq_data in self.aa_freq.items():
+        #         row_data = [position] + [freq_data.get(aminoacid, 0) for aminoacid in all_aminoacids]
+        #         csv_writer.writerow(row_data)
+        #
+        # print(f'CSV file saved at: {csv_file_path}')

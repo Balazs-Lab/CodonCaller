@@ -82,20 +82,20 @@ class TestYourCode(unittest.TestCase):
     def test_process_sample(self):
         cds = "Env"
         self.test_instance.process_sample(cds)
-        print(self.test_instance.aa_counts)
+        print(self.test_instance.mut_call)
 
     def test_process_sample(self):
         cds = "Env"
         self.test_instance.process_sample(cds)
         self.test_instance.aa_count_to_freq(cds)
-        print(self.test_instance.aa_freq)
+        print(self.test_instance.mut_call)
 
 
     def test_write_data(self):
         cds = "Env"
         self.test_instance.process_sample(cds)
         self.test_instance.aa_count_to_freq(cds)
-        self.test_instance.write_to_csv("../test_data/calls/CD5-m246-20-REJOc.csv")
+        self.test_instance.write_to_csv("../test_data/calls/CD20-m999-8-REJOc.csv")
 
 #     def test_translate_csf(self):
 #         sequence = self.analyzer.read_fasta().seq
