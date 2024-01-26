@@ -27,26 +27,6 @@ codon_to_amino_acid = {
 }
 
 
-def write_to_csv(frequency_dictionary, csv_file_path='../test_data/aa_frequencies.csv'):
-    # Get a set of all unique codon types
-    all_aminoacids = set(codon_to_amino_acid.values())
-
-    # Create a CSV file and write headers
-    with open(csv_file_path, 'w', newline='') as csvfile:
-        csv_writer = csv.writer(csvfile)
-
-        # Write headers (position and all codon types)
-        headers = ['Position'] + list(all_aminoacids)
-        csv_writer.writerow(headers)
-
-        # Write frequency data for each position
-        for position, freq_data in frequency_dictionary.items():
-            row_data = [position] + [freq_data.get(aminoacid, 0) for aminoacid in all_aminoacids]
-            csv_writer.writerow(row_data)
-
-    print(f'CSV file saved at: {csv_file_path}')
-
-
 class VariantCaller:
     def __init__(self, bed_file, bam_file, reference_fasta, read_quality_threshold=20, base_quality_threshold=35):
         self.reference_fasta = None

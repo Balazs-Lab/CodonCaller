@@ -1,8 +1,7 @@
 import unittest
-from variant_caller import VariantCaller
+from CodonCaller.variant_caller import VariantCaller
 import pysam
-from Bio.Seq import Seq
-from Bio.SeqRecord import SeqRecord
+
 
 class TestRead:
     def __init__(self, sequence, position_start, quality):
