@@ -7,7 +7,7 @@ setuptools.setup(
     name="CodonCaller",
     version="1.0.0",
     author="Adam Nitido",
-    author_email="anitido@gmail.com",
+    author_email="adamnitido@gmail.com",
     description="Codon Based Variant Caller for HIV Deep Sequencing Data",
     long_description=long_description,
     url="https://github.com/adamnitido/CodonCaller",

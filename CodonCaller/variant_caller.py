@@ -23,12 +23,44 @@ codon_to_amino_acid = {
     'TGT': 'C', 'TGC': 'C', 'TGA': '*', 'TGG': 'W',
     'CGT': 'R', 'CGC': 'R', 'CGA': 'R', 'CGG': 'R',
     'AGT': 'S', 'AGC': 'S', 'AGA': 'R', 'AGG': 'R',
-    'GGT': 'G', 'GGC': 'G', 'GGA': 'G', 'GGG': 'G'
+    'GGT': 'G', 'GGC': 'G', 'GGA': 'G', 'GGG': 'G',
+    'NNN': 'DEL'
 }
+
+
+def parse_read(read):
+    """
+
+    :param read: perform operation on a specific read
+    :return:component sequence, position, quality, and a dict of INDEL positions
+    """
+
+    read_sequence = Seq(read.query_sequence)
+    read_positions = read.get_reference_positions()
+    quality = read.query_alignment_qualities
+    indels = {"insertion": [], "deletion": []}
+    position = list(read_positions)[0]
+
+
+    for i in range(len(read.cigartuples)):
+        item = read.cigartuples[i]
+        if (item[0] != 1) & (item[0] != 2) & (item[0] != 3) & (item[0] != 6):
+            # these are the mapped reads
+            position += item[1]
+        if item[0] == 1:
+            indels["insertion"].append((position, item[1]))
+            # position += item[1]
+
+        elif (item[0] == 2) or (item[0] == 3):
+            indels["deletion"].append((position, item[1]))
+            position += item[1]
+
+    return read_sequence, read_positions, quality, indels
 
 
 class VariantCaller:
     def __init__(self, bed_file, bam_file, reference_fasta, read_quality_threshold=20, base_quality_threshold=35):
+        self.aa_coverage = {}
         self.mut_call = None
         self.codon_frequencies = None
         self.reference_fasta = None
@@ -86,7 +118,8 @@ class VariantCaller:
 
     def filter_amino_acid(self, pairs):
         key, value = pairs
-        # amino acid value - codon with an "N" maps to Unknown
+        # amino acid value - codon with an "N" maps to Unknown except for NNN which is a DEL
+        # I still not like how this works - should be updated to better handel DELs
         if value[0] == "Unknown":
             return False
         # codon sum score - sum of all 3 nucleotide mapping scores
@@ -95,20 +128,7 @@ class VariantCaller:
         else:
             return True
 
-    def parse_read(self, read):
-        """
-
-        :param read: perform operation on a specific read
-        :return:component sequence, position, and quality
-        """
-
-        read_sequence = Seq(read.query_sequence)
-        read_positions = read.get_reference_positions()
-        quality = read.query_alignment_qualities
-
-        return read_sequence, read_positions, quality
-
-    def read_to_codon(self, cds, read_sequence, read_positions, quality):
+    def read_to_codon(self, cds, read_sequence, read_positions, quality, indels):
         """
         :param quality:
         :param read_positions:
@@ -121,6 +141,11 @@ class VariantCaller:
         cds_start = self.cds_regions[cds][0]
         # cds_end = self.cds_regions[cds][1]
 
+        ## Fix Indels
+        read_sequence, read_positions, quality = fix_indels(read_sequence, read_positions, quality, indels)
+
+
+        # adjust read position based on CDS
         if read_positions[0] < cds_start:
             adjust = cds_start - read_positions[0]
             read_positions = read_positions[adjust:]
@@ -138,7 +163,7 @@ class VariantCaller:
         # adjust the start of the sequence
         adjusted_positions = [pos + codonshift for pos in read_positions]
 
-        codon_positions = [1 + ((i - cds_start + codonshift) // 3) for i in adjusted_positions[0::3] if
+        codon_positions = [str(1 + ((i - cds_start + codonshift) // 3)) for i in adjusted_positions[0::3] if
                            i >= cds_start]
 
         # adjust the end of the sequence
@@ -163,19 +188,30 @@ class VariantCaller:
         codons = [adjusted_sequence[i:i + 3] for i in range(0, len(adjusted_sequence), 3)]
         quality_sum = [sum(adjusted_quality[i:i + 3]) for i in range(0, len(adjusted_quality), 3)]
 
+
         return codon_positions, codons, quality_sum
 
     def process_read(self, cds, read):
 
-        read_sequence, read_positions, quality = self.parse_read(read)
+        read_sequence, read_positions, quality, indel = parse_read(read)
 
         ## TODO turn this into a proper filter
         if len(read_positions) > 100:
-            codon_positions, codons, quality_sum = self.read_to_codon(cds, read_sequence, read_positions, quality)
+            codon_positions, codons, quality_sum = self.read_to_codon(cds, read_sequence, read_positions, quality,
+                                                                      indel)
+            # print(len(codon_positions), codon_positions)
+            # print(len(codons), codons)
+            # print(len(quality_sum), quality_sum)
 
             # convert codons to amino acids
             amino_acids = [codon_to_amino_acid.get(codon, 'Unknown') for codon in codons]
+            # print(amino_acids)
 
+            # annotate insertions to new location
+            for i, j in enumerate(codon_positions[:-1]):
+                if j == codon_positions[i+1]:
+                    codon_positions[i] = str(codon_positions[i]) + 'i'
+            # print(codon_positions)
             d = dict(zip(codon_positions, zip(amino_acids, quality_sum)))
 
             ## filter out Ns and low quality mapping codons
@@ -187,8 +223,13 @@ class VariantCaller:
             pass
 
 
-    def process_sample(self, cds):
+    def compile_reads(self, cds):
+        """
 
+        :param cds:
+        :return: dictionary where the key is each ammino acid position (including insertions) and the value is a list
+        tuples with the amino acid and summed quality score
+        """
         count = 0
         read_data = []
         for read in self.reads:
@@ -207,7 +248,31 @@ class VariantCaller:
             except AttributeError:
                 pass
 
-        ordered_dict = OrderedDict(sorted(compiled_dataset.items()))
+        ordered_dict = compiled_dataset  # OrderedDict(sorted(compiled_dataset.items())) might need to reverse this
+        return ordered_dict
+
+    def fix_insertions(self, ordered_dict):
+        deletion_list =[]
+        for key, value in ordered_dict.items():
+            if "i" in key:
+                # annotate mutations to be insertions
+                insertions = []
+                for item in value:
+                    insertions.append((item[0] + "i", item[1]))
+
+                location = key[:-1]
+                ordered_dict[location].extend(insertions)
+                deletion_list.append(key)
+
+        for key in deletion_list:
+            del ordered_dict[key]
+        return ordered_dict
+
+
+    def process_sample(self, cds):
+        ordered_dict = self.compile_reads(cds)
+        # move insertions to original base
+        ordered_dict = self.fix_insertions(ordered_dict)
 
         # Dictionary to store codon frequencies for each position
         # self.codon_frequencies = {}
@@ -224,6 +289,7 @@ class VariantCaller:
 
             # Store the codon frequencies for the current position in the result dictionary
             self.aa_counts[position] = position_codon_counts
+            self.aa_coverage[position] = sum(position_codon_counts.values())
 
         # Now, codon_frequencies is a dictionary where the key is the position,
         # and the value is another dictionary containing codon frequencies
@@ -233,27 +299,36 @@ class VariantCaller:
 
         cds_start = self.cds_regions[cds][0]
         cds_end = self.cds_regions[cds][1]
+        cds_len = (cds_end - cds_start)//3
         reference_protein = self.cds_aminoacids[cds]
-        reference_dict = {i + 1: reference_protein[i] for i in range(len(reference_protein))}
-        common_positions = set(reference_dict.keys()).intersection(self.aa_counts.keys())
+        reference_dict = {str(i + 1): reference_protein[i] for i in range(len(reference_protein))}
 
+        # iterate through all positions from mapped data (including insertions)
+        # common_positions = list(self.aa_counts.keys())
+        # common_positions.sort()
+        # print(common_positions)
+        common_positions = set(reference_dict.keys()).intersection(self.aa_counts.keys())
 
         mutant_call_list = []
         positions = []
         mutant_freq = []
+        # print(reference_dict)
+        # print(common_positions)
 
         # Compare amino acids at each position
+
         for position in common_positions:
+
             reference_aa = reference_dict[position]
             experimental_aa = self.aa_counts[position]
+
             wt = 0
             mut = 0
             tmp_dict = dict()
-            wt_id = None
+            wt_id = reference_aa
             for key, value in experimental_aa.items():
                 if key == reference_aa:
                     wt = value
-                    wt_id = key
                 else:
                     mut += value
             if mut > 0:
@@ -266,31 +341,107 @@ class VariantCaller:
 
             mutant_freq.append(tmp_dict)
             positions.append(position)
-        #print(mutant_call_list)
+        # print(mutant_call_list)
         mut_call = pd.DataFrame(mutant_call_list, columns=['POS_AA', 'REF_AA', "ALT_AA", "ALT_FREQ"])
         self.mut_call = mut_call
         # print(self.mut_call)
-        #self.aa_freq = dict(zip(positions, mutant_freq))
-
+        # self.aa_freq = dict(zip(positions, mutant_freq))
 
     def write_to_csv(self, csv_file_path='../test_data/aa_frequencies.csv'):
-
         self.mut_call.to_csv(csv_file_path)
 
-        # # Get a set of all unique codon types
-        # all_aminoacids = set(codon_to_amino_acid.values())
-        #
-        # # Create a CSV file and write headers
-        # with open(csv_file_path, 'w', newline='') as csvfile:
-        #     csv_writer = csv.writer(csvfile)
-        #
-        #     # Write headers (position and all codon types)
-        #     headers = ['Position'] + list(all_aminoacids)
-        #     csv_writer.writerow(headers)
-        #
-        #     # Write frequency data for each position
-        #     for position, freq_data in self.aa_freq.items():
-        #         row_data = [position] + [freq_data.get(aminoacid, 0) for aminoacid in all_aminoacids]
-        #         csv_writer.writerow(row_data)
-        #
-        # print(f'CSV file saved at: {csv_file_path}')
+    def write_coverage_to_csv(self, csv_file_path='../test_data/aa_coverage.csv'):
+        coverage_df = pd.DataFrame.from_dict(self.aa_coverage, orient='index')
+        coverage_df = coverage_df.reset_index(0)
+        coverage_df.columns = ["POS_AA", "COVERAGE"]
+        coverage_df.to_csv(csv_file_path)
+
+
+def sort_indel_dict(indels):
+    sorted_indel = dict()
+    for k, v in indels.items():
+        type = k
+        for item in v:
+            start = item[0]
+            length = item[1]
+            sorted_indel[start] = (type, length)
+    sorted_indel = dict(OrderedDict(sorted(sorted_indel.items())))
+
+    return sorted_indel
+
+def fix_indels(read_sequence, read_positions, quality, indels):
+    # order the indels
+
+    sorted_indel = sort_indel_dict(indels)
+
+    # need to shift the deletion position for every insertion called
+    del_shift = 0
+    # insert counter
+    total_insert_shift = 0
+    # iterate though positions
+    # print(indels)
+    # print('pre-fix',len(read_positions),len(read_sequence))
+    for position in sorted_indel.keys():
+
+        if sorted_indel[position][0] == "insertion":
+            start = position
+            length = sorted_indel[position][1]
+            read_positions = fix_insert(read_positions, start, length, del_shift+total_insert_shift)
+            total_insert_shift += length
+
+        elif sorted_indel[position][0] == "deletion":
+            start = position
+            length = sorted_indel[position][1]
+            shift = total_insert_shift
+            del_shift += length
+            read_sequence, read_positions, quality = fix_deletion(read_sequence, read_positions, quality, start, length, shift)
+
+    # print('adjusted positions',len(read_positions),len(read_sequence))
+    return read_sequence, read_positions, quality
+
+
+def fix_insert(read_positions, start, length, del_shift):
+    """
+    :param length:
+    :param start:
+    :param read_positions: a list of positions corresponding to a read sequence
+    :param insertion: an insertion tuple with the format (start_position, insertion_length)
+    :return: a corrected set of read positions where the inserted positions have a character "a" appended to them
+    and the positions following the insertion are adjusted based on the size of the insert to map to their
+    original positions
+    """
+
+    full_insertion = list(range(start, start + length))
+    # corrected_read_positions = []
+
+    corrected_read_positions = read_positions[:start - min(read_positions) + del_shift]
+    corrected_read_positions.extend(full_insertion)
+    corrected_read_positions.extend(read_positions[start - min(read_positions) + del_shift:])
+
+    return corrected_read_positions
+
+
+def fix_deletion(read_sequence, read_positions, quality, start, length, shift):
+
+    #full_deletion = list(range(start - shift, start - shift + length))
+    full_deletion = list(range(start, start + length))
+    # print(full_deletion)
+
+    # update sequence
+    corrected_read_sequence = read_sequence[:start - min(read_positions) + shift -1 ]
+    corrected_read_sequence = corrected_read_sequence + length * "N"
+    corrected_read_sequence = corrected_read_sequence + read_sequence[start - min(read_positions) + shift -1:]
+
+    # update positions
+    # print(len(read_positions))
+    corrected_read_positions = read_positions[: start - min(read_positions) + shift]
+    corrected_read_positions.extend(full_deletion)
+    corrected_read_positions.extend(read_positions[start - min(read_positions) + shift :])
+    # print(len(corrected_read_positions))
+
+    # update quality scores
+    corrected_quality = quality[: start - min(read_positions) + shift]
+    corrected_quality.extend(length * [99])
+    corrected_quality.extend(quality[start - min(read_positions) + shift:])
+
+    return corrected_read_sequence, corrected_read_positions, corrected_quality
