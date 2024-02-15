@@ -2,10 +2,7 @@ import pysam
 import pandas as pd
 from Bio import SeqIO
 from Bio.Seq import Seq
-from Bio.SeqUtils import seq1
-from multiprocessing import Pool
 from collections import defaultdict, OrderedDict
-import csv
 
 codon_to_amino_acid = {
     'TTT': 'F', 'TTC': 'F', 'TTA': 'L', 'TTG': 'L',
@@ -56,6 +53,35 @@ def parse_read(read):
             position += item[1]
 
     return read_sequence, read_positions, quality, indels
+
+
+def fix_insertions(ordered_dict):
+    """
+
+    :param ordered_dict: a dictionary where the key is a base and the value is the amino acid
+    :return: integrates insertions in the dictionary by annotating the amino acid to indicate insertion
+    then appending those values to the list of amino acids at the site of insertion
+    """
+    deletion_list =[]
+    new_ordered_dict = ordered_dict
+    for key, value in ordered_dict.items():
+        if "i" in key:
+            # annotate mutations to be insertions
+            insertions = []
+            for item in value:
+                insertions.append((item[0] + "i", item[1]))
+
+            location = key[:-1]
+            if location in new_ordered_dict.keys():
+                new_ordered_dict[location].extend(insertions)
+            else:
+                new_ordered_dict[location] = insertions
+            # ordered_dict[location].append(insertions)
+            deletion_list.append(key)
+
+    for key in deletion_list:
+        del new_ordered_dict[key]
+    return new_ordered_dict
 
 
 class VariantCaller:
@@ -193,12 +219,12 @@ class VariantCaller:
 
     def process_read(self, cds, read):
 
-        read_sequence, read_positions, quality, indel = parse_read(read)
+        read_sequence, read_positions, quality, indels = parse_read(read)
 
         ## TODO turn this into a proper filter
         if len(read_positions) > 100:
             codon_positions, codons, quality_sum = self.read_to_codon(cds, read_sequence, read_positions, quality,
-                                                                      indel)
+                                                                      indels)
             # print(len(codon_positions), codon_positions)
             # print(len(codons), codons)
             # print(len(quality_sum), quality_sum)
@@ -233,7 +259,7 @@ class VariantCaller:
         count = 0
         read_data = []
         for read in self.reads:
-            if (read.mapping_quality > self.read_quality_threshold) and (read.reference_start > 0):
+            if (read.mapping_quality > self.read_quality_threshold) and (read.reference_start >= 0):
                 result = self.process_read(cds, read)
                 read_data.append(result)
 
@@ -251,28 +277,10 @@ class VariantCaller:
         ordered_dict = compiled_dataset  # OrderedDict(sorted(compiled_dataset.items())) might need to reverse this
         return ordered_dict
 
-    def fix_insertions(self, ordered_dict):
-        deletion_list =[]
-        for key, value in ordered_dict.items():
-            if "i" in key:
-                # annotate mutations to be insertions
-                insertions = []
-                for item in value:
-                    insertions.append((item[0] + "i", item[1]))
-
-                location = key[:-1]
-                ordered_dict[location].extend(insertions)
-                deletion_list.append(key)
-
-        for key in deletion_list:
-            del ordered_dict[key]
-        return ordered_dict
-
-
     def process_sample(self, cds):
         ordered_dict = self.compile_reads(cds)
         # move insertions to original base
-        ordered_dict = self.fix_insertions(ordered_dict)
+        ordered_dict = fix_insertions(ordered_dict)
 
         # Dictionary to store codon frequencies for each position
         # self.codon_frequencies = {}
@@ -297,17 +305,21 @@ class VariantCaller:
 
     def aa_count_to_freq(self, cds):
 
-        cds_start = self.cds_regions[cds][0]
-        cds_end = self.cds_regions[cds][1]
-        cds_len = (cds_end - cds_start)//3
+        # cds_start = self.cds_regions[cds][0]
+        # cds_end = self.cds_regions[cds][1]
+        # cds_len = (cds_end - cds_start)//3
+
         reference_protein = self.cds_aminoacids[cds]
+
         reference_dict = {str(i + 1): reference_protein[i] for i in range(len(reference_protein))}
+        # print(reference_dict)
 
         # iterate through all positions from mapped data (including insertions)
         # common_positions = list(self.aa_counts.keys())
         # common_positions.sort()
         # print(common_positions)
         common_positions = set(reference_dict.keys()).intersection(self.aa_counts.keys())
+        # print(common_positions)
 
         mutant_call_list = []
         positions = []
@@ -321,6 +333,7 @@ class VariantCaller:
 
             reference_aa = reference_dict[position]
             experimental_aa = self.aa_counts[position]
+            # print(reference_aa,experimental_aa)
 
             wt = 0
             mut = 0
@@ -428,15 +441,15 @@ def fix_deletion(read_sequence, read_positions, quality, start, length, shift):
     # print(full_deletion)
 
     # update sequence
-    corrected_read_sequence = read_sequence[:start - min(read_positions) + shift -1 ]
+    corrected_read_sequence = read_sequence[:start - min(read_positions) + shift  ]
     corrected_read_sequence = corrected_read_sequence + length * "N"
-    corrected_read_sequence = corrected_read_sequence + read_sequence[start - min(read_positions) + shift -1:]
+    corrected_read_sequence = corrected_read_sequence + read_sequence[start - min(read_positions) + shift :]
 
     # update positions
     # print(len(read_positions))
     corrected_read_positions = read_positions[: start - min(read_positions) + shift]
     corrected_read_positions.extend(full_deletion)
-    corrected_read_positions.extend(read_positions[start - min(read_positions) + shift :])
+    corrected_read_positions.extend(read_positions[start - min(read_positions) + shift:])
     # print(len(corrected_read_positions))
 
     # update quality scores
