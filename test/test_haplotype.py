@@ -1,13 +1,13 @@
 import unittest
 from CodonCaller.haplotype import *
 
-
 class TestYourCodeWT(unittest.TestCase):
 
     def setUp(self):
         bed_file = "../test_data/bed_file/JRCSF_haplotypes.bed"
         bam_file = "../test_data/sorted_reads/CD27-m787-20-JRCSF.bam"
         reference_fasta = "../test_data/reference_sequence/JRCSF-reference.fa"
+        contig = "JRCSF"
         self.test_instance = Haplotype(bed_file, bam_file, reference_fasta)
 
     def test_load_haplotype_regions(self):
@@ -25,10 +25,8 @@ class TestYourCodeWT(unittest.TestCase):
         # print(read.reference_end)
 
 
-    def test_all_haplotyoes(self):
+    def test_all_haplotypes(self):
 
-        output = self.test_instance.all_haplotyoes()
+        self.test_instance.all_haplotypes
+        self.test_instance.write_to_csv("../test_data/annotation.csv")
 
-        output.to_csv("../test_data/annotation.csv")
-
-        print(output)
