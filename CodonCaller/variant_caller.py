@@ -474,7 +474,7 @@ def fix_insert(read_positions, start, length, del_shift):
 def fix_deletion(read_sequence, read_positions, quality, start, length, shift):
     # full_deletion = list(range(start - shift, start - shift + length))
     full_deletion = list(range(start, start + length))
-    print(full_deletion)
+    # print(full_deletion)
 
     # update sequence
     corrected_read_sequence = read_sequence[:start - min(read_positions) + shift]
