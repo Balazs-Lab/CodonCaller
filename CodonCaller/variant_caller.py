@@ -121,7 +121,8 @@ class VariantCaller:
     def map_correct(self, read):
 
         # # adjust mis-mapped bases in deletions
-        reference = str(read.reference_name)
+        key, value = list(self.cds_regions.items())[0]
+        reference = key
         start = self.cds_regions[reference][0]
         end = self.cds_regions[reference][1]
         codon_starts = [i for i in range(start, end, 3)]
