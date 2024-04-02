@@ -38,7 +38,6 @@ def parse_read(read):
     indels = {"insertion": [], "deletion": []}
     position = list(read_positions)[0]
 
-
     for i in range(len(read.cigartuples)):
         item = read.cigartuples[i]
         if (item[0] != 1) & (item[0] != 2) & (item[0] != 3) & (item[0] != 6):
@@ -47,7 +46,6 @@ def parse_read(read):
         if item[0] == 1:
             indels["insertion"].append((position, item[1]))
             # position += item[1]
-
         elif (item[0] == 2) or (item[0] == 3):
             indels["deletion"].append((position, item[1]))
             position += item[1]
@@ -62,7 +60,7 @@ def fix_insertions(ordered_dict):
     :return: integrates insertions in the dictionary by annotating the amino acid to indicate insertion
     then appending those values to the list of amino acids at the site of insertion
     """
-    deletion_list =[]
+    deletion_list = []
     new_ordered_dict = ordered_dict
     for key, value in ordered_dict.items():
         if "i" in key:
@@ -120,6 +118,42 @@ class VariantCaller:
         record = SeqIO.read(self.fasta_file, "fasta")
         return record
 
+    def map_correct(self, read):
+
+        # # adjust mis-mapped bases in deletions
+        reference = str(read.reference_name)
+        start = self.cds_regions[reference][0]
+        end = self.cds_regions[reference][1]
+        codon_starts = [i for i in range(start, end, 3)]
+        codon_one_shift = [i - 1 for i in range(start, end, 3)]
+        codon_two_shift = [i - 2 for i in range(start, end, 3)]
+
+        read_sequence, read_positions, quality, indels = parse_read(read)
+
+        corrected_deletions = list()
+        for deletion in indels['deletion']:
+            if deletion[1] % 3 != 0:
+                corrected_deletions.append(deletion)
+
+            elif deletion[0] in codon_starts:
+                corrected_deletions.append(deletion)
+
+            elif deletion[0] in codon_one_shift:
+                index = read_positions.index(deletion[0]+deletion[1])
+                read_positions[index] = deletion[0]
+                corrected_deletions.append((deletion[0]+1, deletion[1]))
+
+            elif deletion[0] in codon_two_shift:
+                index = read_positions.index(deletion[0]+deletion[1])
+                read_positions[index] = deletion[0]
+                corrected_deletions.append((deletion[0]+2, deletion[1]))
+
+        indels['deletion'] = corrected_deletions
+
+        return read_sequence, read_positions, quality, indels
+
+
+
     def translate_cds(self):
         """
         :return: dict with translations of all CDS regions / annotations in the reference sequence
@@ -145,7 +179,7 @@ class VariantCaller:
     def filter_amino_acid(self, pairs):
         key, value = pairs
         # amino acid value - codon with an "N" maps to Unknown except for NNN which is a DEL
-        # I still not like how this works - should be updated to better handel DELs
+        # I still do not like how this works - should be updated to better handel DELs
         if value[0] == "Unknown":
             return False
         # codon sum score - sum of all 3 nucleotide mapping scores
@@ -169,7 +203,8 @@ class VariantCaller:
 
         ## Fix Indels
         read_sequence, read_positions, quality = fix_indels(read_sequence, read_positions, quality, indels)
-
+        # print(read_sequence)
+        # print(read_positions)
 
         # adjust read position based on CDS
         if read_positions[0] < cds_start:
@@ -214,12 +249,12 @@ class VariantCaller:
         codons = [adjusted_sequence[i:i + 3] for i in range(0, len(adjusted_sequence), 3)]
         quality_sum = [sum(adjusted_quality[i:i + 3]) for i in range(0, len(adjusted_quality), 3)]
 
-
         return codon_positions, codons, quality_sum
 
     def process_read(self, cds, read):
 
-        read_sequence, read_positions, quality, indels = parse_read(read)
+        # read_sequence, read_positions, quality, indels = parse_read(read)
+        read_sequence, read_positions, quality, indels = self.map_correct(read)
 
         ## TODO turn this into a proper filter
         if len(read_positions) > 100:
@@ -235,7 +270,7 @@ class VariantCaller:
 
             # annotate insertions to new location
             for i, j in enumerate(codon_positions[:-1]):
-                if j == codon_positions[i+1]:
+                if j == codon_positions[i + 1]:
                     codon_positions[i] = str(codon_positions[i]) + 'i'
             # print(codon_positions)
             d = dict(zip(codon_positions, zip(amino_acids, quality_sum)))
@@ -247,7 +282,6 @@ class VariantCaller:
             return d_clean
         else:
             pass
-
 
     def compile_reads(self, cds):
         """
@@ -382,6 +416,7 @@ def sort_indel_dict(indels):
 
     return sorted_indel
 
+
 def fix_indels(read_sequence, read_positions, quality, indels):
     # order the indels
 
@@ -399,7 +434,7 @@ def fix_indels(read_sequence, read_positions, quality, indels):
         if sorted_indel[position][0] == "insertion":
             start = position
             length = sorted_indel[position][1]
-            read_positions = fix_insert(read_positions, start, length, del_shift+total_insert_shift)
+            read_positions = fix_insert(read_positions, start, length, del_shift + total_insert_shift)
             total_insert_shift += length
 
         elif sorted_indel[position][0] == "deletion":
@@ -407,7 +442,8 @@ def fix_indels(read_sequence, read_positions, quality, indels):
             length = sorted_indel[position][1]
             shift = total_insert_shift
             del_shift += length
-            read_sequence, read_positions, quality = fix_deletion(read_sequence, read_positions, quality, start, length, shift)
+            read_sequence, read_positions, quality = fix_deletion(read_sequence, read_positions, quality, start, length,
+                                                                  shift)
 
     # print('adjusted positions',len(read_positions),len(read_sequence))
     return read_sequence, read_positions, quality
@@ -435,15 +471,14 @@ def fix_insert(read_positions, start, length, del_shift):
 
 
 def fix_deletion(read_sequence, read_positions, quality, start, length, shift):
-
-    #full_deletion = list(range(start - shift, start - shift + length))
+    # full_deletion = list(range(start - shift, start - shift + length))
     full_deletion = list(range(start, start + length))
-    # print(full_deletion)
+    print(full_deletion)
 
     # update sequence
-    corrected_read_sequence = read_sequence[:start - min(read_positions) + shift  ]
+    corrected_read_sequence = read_sequence[:start - min(read_positions) + shift]
     corrected_read_sequence = corrected_read_sequence + length * "N"
-    corrected_read_sequence = corrected_read_sequence + read_sequence[start - min(read_positions) + shift :]
+    corrected_read_sequence = corrected_read_sequence + read_sequence[start - min(read_positions) + shift:]
 
     # update positions
     # print(len(read_positions))

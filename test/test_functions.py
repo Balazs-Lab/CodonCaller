@@ -4,6 +4,45 @@ import pysam
 from collections import Counter
 
 
+### MisMap Testing
+
+class TestMisMap(unittest.TestCase):
+
+
+    def setUp(self):
+        bed_file = "../test_data/bed_file/JRCSF.bed"
+        bam_file = "../test_data/sorted_reads/CD27-m787-20-JRCSF.bam"
+        reference_fasta = "../test_data/reference_sequence/JRCSF-reference.fa"
+        read_quality_threshold = 40
+        base_quality_threshold = 30
+        self.test_instance = VariantCaller(bed_file, bam_file, reference_fasta, read_quality_threshold,
+                                           base_quality_threshold)
+
+    def test_codon_mistmap(self):
+        read = self.test_instance.reads[2500]
+        cds = "JRCSF"
+
+        codon_starts = [i for i in range(52, 2598, 3)]
+        read_sequence, read_positions, quality, indels = parse_read(read)
+        print(read_sequence)
+        print(read_positions)
+        print(indels)
+
+        read_sequence, read_positions, quality, indels = self.test_instance.map_correct(read)
+        print(read_sequence)
+        print(read_positions)
+        print(indels)
+
+        codon_positions, codons, quality_sum = self.test_instance.read_to_codon(cds, read_sequence, read_positions, quality, indels)
+        print(codon_positions)
+        print(codons)
+
+    def test_pipeline(self):
+        cds = "JRCSF"
+        self.test_instance.process_sample(cds)
+        self.test_instance.aa_count_to_freq(cds)
+        print(self.test_instance.aa_counts)
+        self.test_instance.write_to_csv("../test_data/calls/map_test.csv")
 
 ### WT Testing ###
 class TestYourCodeWT(unittest.TestCase):
@@ -149,6 +188,7 @@ class TestYourCodeSNP(unittest.TestCase):
         self.test_instance.aa_count_to_freq(cds)
         self.test_instance.write_to_csv("../test_data/calls/SNP_test.csv")
 
+
 ### Insertion Testing ###
 
 class TestYourCodeIN(unittest.TestCase):
@@ -213,8 +253,6 @@ class TestYourCodeIN(unittest.TestCase):
         self.test_instance.process_sample(cds)
         self.test_instance.aa_count_to_freq(cds)
         self.test_instance.write_to_csv("../test_data/calls/IN_test.csv")
-
-
 
     #
     # def test_read_to_codon(self):
@@ -336,7 +374,6 @@ class TestYourCodeIN(unittest.TestCase):
     #     self.test_instance.process_sample(cds)
     #     print(self.test_instance.aa_counts)
 
-
     # def test_compiled_reads(self):
     #     cds = "Env"
     #     out_dict = self.test_instance.compile_reads(cds)
@@ -412,6 +449,7 @@ class TestYourCodeIN(unittest.TestCase):
     #             shift = total_insert_shift
     #             read_sequence, read_positions, quality = fix_deletion(read_sequence, read_positions, quality, start, length, shift)
     #     print(read_positions)
+
 
 ### Deletion Testing ###
 
@@ -478,8 +516,6 @@ class TestYourCodeDEL(unittest.TestCase):
         self.test_instance.aa_count_to_freq(cds)
         self.test_instance.write_to_csv("../test_data/calls/DEL_test.csv")
 
-
-
     #
     # def test_read_to_codon(self):
     #     cds = "Env"
@@ -600,7 +636,6 @@ class TestYourCodeDEL(unittest.TestCase):
     #     self.test_instance.process_sample(cds)
     #     print(self.test_instance.aa_counts)
 
-
     # def test_compiled_reads(self):
     #     cds = "Env"
     #     out_dict = self.test_instance.compile_reads(cds)
@@ -677,6 +712,7 @@ class TestYourCodeDEL(unittest.TestCase):
     #             read_sequence, read_positions, quality = fix_deletion(read_sequence, read_positions, quality, start, length, shift)
     #     print(read_positions)
 
+
 ### INDEL Testing ###
 class TestYourCodeINDEL(unittest.TestCase):
 
@@ -720,8 +756,9 @@ class TestYourCodeINDEL(unittest.TestCase):
         read_sequence, read_positions, quality, indels = parse_read(read)
 
         print(indels)
-        #fix indels
-        codon_positions, codons, quality_sum = self.test_instance.read_to_codon(cds, read_sequence, read_positions, quality, indels)
+        # fix indels
+        codon_positions, codons, quality_sum = self.test_instance.read_to_codon(cds, read_sequence, read_positions,
+                                                                                quality, indels)
         print(codon_positions)
         print(codons)
 
@@ -751,4 +788,3 @@ class TestYourCodeINDEL(unittest.TestCase):
         self.test_instance.process_sample(cds)
         self.test_instance.aa_count_to_freq(cds)
         self.test_instance.write_to_csv("../test_data/calls/INDEL_test.csv")
-

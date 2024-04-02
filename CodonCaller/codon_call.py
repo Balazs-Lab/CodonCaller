@@ -30,7 +30,6 @@ def load_cds_regions(bed_file):
         for line in bed:
             chrom, start, end = line.strip().split('\t')
             cds_regions.append((chrom, int(start), int(end)))
-
     return cds_regions
 
 
