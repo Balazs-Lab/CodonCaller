@@ -1,2 +1,2 @@
 # CodonCaller
-Scripts for Calling Codon Changed in HIV Deep Sequencing Data
+Package for codon aware variant calling in HIV Deep Sequencing Data
