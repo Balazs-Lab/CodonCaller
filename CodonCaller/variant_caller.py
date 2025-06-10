@@ -83,8 +83,8 @@ def fix_insertions(ordered_dict):
 
 
 class VariantCaller:
-    def __init__(self, bed_file, bam_file, reference_fasta, read_quality_threshold=20, base_quality_threshold=35):
-        self.aa_coverage = {}
+    def __init__(self, bed_file, bam_file, reference_fasta, read_quality_threshold=20, base_quality_threshold=35, report_as_codons=True):
+        self.coverage = {}
         self.mut_call = None
         self.codon_frequencies = None
         self.reference_fasta = None
@@ -93,11 +93,13 @@ class VariantCaller:
         self.fasta_file = reference_fasta
         self.read_quality_threshold = read_quality_threshold
         self.base_quality_threshold = base_quality_threshold * 3
+        self.report_as_codons = report_as_codons
         self.reference_sequence = self.read_fasta()
         self.cds_regions = self.load_cds_regions()
         self.cds_aminoacids = self.translate_cds()
+        self.reference_codons = self.reference_codons()
         self.reads = self.load_reads()
-        self.aa_counts = {}
+        self.counts = {}
         self.aa_freq = {}
 
     def load_cds_regions(self):
@@ -153,8 +155,6 @@ class VariantCaller:
 
         return read_sequence, read_positions, quality, indels
 
-
-
     def translate_cds(self):
         """
         :return: dict with translations of all CDS regions / annotations in the reference sequence
@@ -167,6 +167,21 @@ class VariantCaller:
             cds_sequence = sequence[cds_start:cds_end]  # Assuming 1-based indexing
             cds_aminoacids[key] = cds_sequence.translate()
         return cds_aminoacids
+
+    def reference_codons(self):
+        """
+        :return:
+        :return: list of codons in the reference sequence
+        """
+        reference_codons = dict()
+        for key, value in self.cds_regions.items():
+            sequence = self.reference_sequence
+            cds_start = self.cds_regions[key][0]
+            cds_end = self.cds_regions[key][1]
+            cds_sequence = sequence[cds_start:cds_end]  # Assuming 1-based indexing
+            reference_codons[key] = [str(cds_sequence[i:i + 3].seq) for i in range(0, len(cds_sequence), 3)]
+
+        return reference_codons
 
     def load_reads(self):
         """
@@ -204,8 +219,6 @@ class VariantCaller:
 
         ## Fix Indels
         read_sequence, read_positions, quality = fix_indels(read_sequence, read_positions, quality, indels)
-        # print(read_sequence)
-        # print(read_positions)
 
         # adjust read position based on CDS
         if read_positions[0] < cds_start:
@@ -261,25 +274,22 @@ class VariantCaller:
         if len(read_positions) > 100:
             codon_positions, codons, quality_sum = self.read_to_codon(cds, read_sequence, read_positions, quality,
                                                                       indels)
-            # print(len(codon_positions), codon_positions)
-            # print(len(codons), codons)
-            # print(len(quality_sum), quality_sum)
-
+            # maintain as codons if needed
+            if self.report_as_codons:
+                codon_or_aa = [codon for codon in codons]
             # convert codons to amino acids
-            amino_acids = [codon_to_amino_acid.get(codon, 'Unknown') for codon in codons]
-            # print(amino_acids)
+            else:
+                codon_or_aa = [codon_to_amino_acid.get(codon, 'Unknown') for codon in codons]
 
             # annotate insertions to new location
             for i, j in enumerate(codon_positions[:-1]):
                 if j == codon_positions[i + 1]:
                     codon_positions[i] = str(codon_positions[i]) + 'i'
-            # print(codon_positions)
-            d = dict(zip(codon_positions, zip(amino_acids, quality_sum)))
+            d = dict(zip(codon_positions, zip(codon_or_aa, quality_sum)))
 
             ## filter out Ns and low quality mapping codons
             d_clean = dict(filter(self.filter_amino_acid, d.items()))
 
-            # print(d_clean)
             return d_clean
         else:
             pass
@@ -297,7 +307,6 @@ class VariantCaller:
             if (read.mapping_quality > self.read_quality_threshold) and (read.reference_start >= 0):
                 result = self.process_read(cds, read)
                 read_data.append(result)
-
         compiled_dataset = defaultdict(lambda: defaultdict(int))
         for dict_data in read_data:
             try:
@@ -314,12 +323,11 @@ class VariantCaller:
 
     def process_sample(self, cds):
         ordered_dict = self.compile_reads(cds)
+
         # move insertions to original base
         ordered_dict = fix_insertions(ordered_dict)
 
         # Dictionary to store codon frequencies for each position
-        # self.codon_frequencies = {}
-
         # Iterate through each position in the mapped_positions dictionary
         for position, codon_metadata_list in ordered_dict.items():
             # Dictionary to store codon frequencies for the current position
@@ -331,57 +339,52 @@ class VariantCaller:
                 position_codon_counts[codon] = position_codon_counts.get(codon, 0) + 1
 
             # Store the codon frequencies for the current position in the result dictionary
-            self.aa_counts[position] = position_codon_counts
-            self.aa_coverage[position] = sum(position_codon_counts.values())
+            self.counts[position] = position_codon_counts
+            self.coverage[position] = sum(position_codon_counts.values())
 
         # Now, codon_frequencies is a dictionary where the key is the position,
         # and the value is another dictionary containing codon frequencies
-        # print(self.codon_frequencies)
+
 
     def aa_count_to_freq(self, cds):
 
-        # cds_start = self.cds_regions[cds][0]
-        # cds_end = self.cds_regions[cds][1]
-        # cds_len = (cds_end - cds_start)//3
 
         reference_protein = self.cds_aminoacids[cds]
+        reference_codons = self.reference_codons[cds]
 
-        reference_dict = {str(i + 1): reference_protein[i] for i in range(len(reference_protein))}
-        # print(reference_dict)
+        if self.report_as_codons:
+            reference_dict = {str(i + 1): reference_codons[i] for i in range(len(reference_codons))}
+        else:
+            reference_dict = {str(i + 1): reference_protein[i] for i in range(len(reference_protein))}
 
         # iterate through all positions from mapped data (including insertions)
-        # common_positions = list(self.aa_counts.keys())
-        # common_positions.sort()
-        # print(common_positions)
-        common_positions = set(reference_dict.keys()).intersection(self.aa_counts.keys())
-        # print(common_positions)
+        common_positions = set(reference_dict.keys()).intersection(self.counts.keys())
+
 
         mutant_call_list = []
         positions = []
         mutant_freq = []
-        # print(reference_dict)
-        # print(common_positions)
 
         # Compare amino acids at each position
 
         for position in common_positions:
 
-            reference_aa = reference_dict[position]
-            experimental_aa = self.aa_counts[position]
-            # print(reference_aa,experimental_aa)
+            reference = reference_dict[position]
+            experimental = self.counts[position]
+            # print(reference,experimental)
 
             wt = 0
             mut = 0
             tmp_dict = dict()
-            wt_id = reference_aa
-            for key, value in experimental_aa.items():
-                if key == reference_aa:
+            wt_id = reference
+            for key, value in experimental.items():
+                if key == reference:
                     wt = value
                 else:
                     mut += value
             if mut > 0:
-                for key, value in experimental_aa.items():
-                    if key != reference_aa:
+                for key, value in experimental.items():
+                    if key != reference:
                         tmp_dict[key] = value / (mut + wt)
                         tmp_out = [position, wt_id, key, value / (mut + wt)]
                         mutant_call_list.append(tmp_out)
@@ -389,17 +392,25 @@ class VariantCaller:
 
             mutant_freq.append(tmp_dict)
             positions.append(position)
-        # print(mutant_call_list)
+
         mut_call = pd.DataFrame(mutant_call_list, columns=['POS_AA', 'REF_AA', "ALT_AA", "ALT_FREQ"])
+
+        # add a column with AA data (if in codon only mode)
+        if self.report_as_codons:
+            mut_call['REF_Codon'] = mut_call['REF_AA']
+            mut_call['ALT_Codon'] = mut_call['ALT_AA']
+            mut_call['REF_AA'] = mut_call['REF_AA'].map(codon_to_amino_acid)
+            mut_call['ALT_AA'] = mut_call['ALT_AA'].map(codon_to_amino_acid)
+
+
         self.mut_call = mut_call
-        # print(self.mut_call)
-        # self.aa_freq = dict(zip(positions, mutant_freq))
+
 
     def write_to_csv(self, csv_file_path='../test_data/aa_frequencies.csv'):
         self.mut_call.to_csv(csv_file_path)
 
     def write_coverage_to_csv(self, csv_file_path='../test_data/aa_coverage.csv'):
-        coverage_df = pd.DataFrame.from_dict(self.aa_coverage, orient='index')
+        coverage_df = pd.DataFrame.from_dict(self.coverage, orient='index')
         coverage_df = coverage_df.reset_index(0)
         coverage_df.columns = ["POS_AA", "COVERAGE"]
         coverage_df.to_csv(csv_file_path)
@@ -428,8 +439,7 @@ def fix_indels(read_sequence, read_positions, quality, indels):
     # insert counter
     total_insert_shift = 0
     # iterate though positions
-    # print(indels)
-    # print('pre-fix',len(read_positions),len(read_sequence))
+
     for position in sorted_indel.keys():
 
         if sorted_indel[position][0] == "insertion":
@@ -445,8 +455,6 @@ def fix_indels(read_sequence, read_positions, quality, indels):
             del_shift += length
             read_sequence, read_positions, quality = fix_deletion(read_sequence, read_positions, quality, start, length,
                                                                   shift)
-
-    # print('adjusted positions',len(read_positions),len(read_sequence))
     return read_sequence, read_positions, quality
 
 
@@ -462,7 +470,6 @@ def fix_insert(read_positions, start, length, del_shift):
     """
 
     full_insertion = list(range(start, start + length))
-    # corrected_read_positions = []
 
     corrected_read_positions = read_positions[:start - min(read_positions) + del_shift]
     corrected_read_positions.extend(full_insertion)
@@ -472,9 +479,8 @@ def fix_insert(read_positions, start, length, del_shift):
 
 
 def fix_deletion(read_sequence, read_positions, quality, start, length, shift):
-    # full_deletion = list(range(start - shift, start - shift + length))
+    # full deletion
     full_deletion = list(range(start, start + length))
-    # print(full_deletion)
 
     # update sequence
     corrected_read_sequence = read_sequence[:start - min(read_positions) + shift]
@@ -482,11 +488,9 @@ def fix_deletion(read_sequence, read_positions, quality, start, length, shift):
     corrected_read_sequence = corrected_read_sequence + read_sequence[start - min(read_positions) + shift:]
 
     # update positions
-    # print(len(read_positions))
     corrected_read_positions = read_positions[: start - min(read_positions) + shift]
     corrected_read_positions.extend(full_deletion)
     corrected_read_positions.extend(read_positions[start - min(read_positions) + shift:])
-    # print(len(corrected_read_positions))
 
     # update quality scores
     corrected_quality = quality[: start - min(read_positions) + shift]
